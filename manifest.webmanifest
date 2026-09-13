@@ -1,0 +1,17 @@
+{
+  "name": "Plan réseaux 49",
+  "short_name": "Plan 49",
+  "description": "Arrêts, lignes et navigation — Aléop, Irigo, Ogalo, scolaires du Maine-et-Loire",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1319",
+  "theme_color": "#0e1319",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

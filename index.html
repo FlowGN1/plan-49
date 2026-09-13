@@ -1,0 +1,1600 @@
+<!DOCTYPE html>
+<!--
+  Plan réseaux 49 — arrêts, lignes, temps réel et navigation
+  Aléop · circuits scolaires · Irigo · Ogalo · Choletbus (Maine-et-Loire)
+
+  © FlowGN, 2026. Tous droits réservés sur le code de l'application.
+
+  Données sous licence ODbL :
+    Région Pays de la Loire  — réseau Aléop, circuits scolaires, agrégat Destinéo
+    Angers Loire Métropole   — réseau Irigo (GTFS et GTFS-RT), conditions particulières d'utilisation
+    Saumur Val de Loire      — réseau Ogalo / Agglobus
+    transport.data.gouv.fr   — Point d'Accès National aux données de mobilité
+    OpenStreetMap            — fond de carte, © les contributeurs, tuiles CARTO
+    IGN                        — Plan IGN et photographies aériennes, Géoplateforme
+    Esri, Maxar                — vue aérienne monde
+
+  Le jeu préparé (donnees.json) est une base dérivée au sens de l'ODbL :
+  toute rediffusion doit conserver ces mentions et rester sous la même licence.
+
+  Bibliothèques tierces : Leaflet (BSD 2 clauses), JSZip (MIT).
+-->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plan réseaux 49 — Aléop · Irigo · Ogalo · Mooj</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0e1319">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icone-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{
+  --bg:#0e1319;         /* ardoise nuit */
+  --panel:#161d25;
+  --panel-2:#1e2732;
+  --line:#2a3542;
+  --ink:#e8eef4;
+  --ink-dim:#93a3b3;
+  --girouette:#ff9e1b;  /* orange girouette LED */
+  --girouette-soft:#3a2a12;
+  --ok:#4ec9a5;
+  --warn:#ffcf5c;
+  --err:#ff6b6b;
+  --rail:340px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg);color:var(--ink);
+  font:15px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  overflow:hidden;
+}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--girouette);outline-offset:2px}
+
+/* ---------- structure ---------- */
+#app{display:flex;height:100%;flex-direction:row;position:relative}
+#rail{
+  width:var(--rail);flex:0 0 var(--rail);background:var(--panel);
+  border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;
+}
+#mapwrap{flex:1;position:relative;min-width:0}
+#map{position:absolute;inset:0;background:#0b0f14}
+
+/* ---------- en-tête ---------- */
+#head{padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+#head h1{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em}
+#head p{margin:3px 0 0;font-size:12.5px;color:var(--ink-dim)}
+#status{margin-top:10px;font-size:12.5px;color:var(--ink-dim);display:flex;gap:6px;align-items:baseline}
+#status b{color:var(--ink);font-weight:600}
+
+/* ---------- onglets ---------- */
+#tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel)}
+#tabs button{
+  flex:1;background:none;border:0;padding:11px 4px;color:var(--ink-dim);
+  font-size:13.5px;font-weight:550;border-bottom:2px solid transparent;
+}
+#tabs button[aria-selected="true"]{color:var(--girouette);border-bottom-color:var(--girouette)}
+.pane{display:none;flex:1;min-height:0;overflow:auto;padding:14px 16px 24px}
+.pane[data-active]{display:block}
+
+/* ---------- blocs ---------- */
+.block{margin:0 0 18px}
+.block h2{margin:0 0 8px;font-size:13px;font-weight:650;color:var(--ink)}
+.hint{font-size:12.5px;color:var(--ink-dim);margin:0 0 10px}
+.src{border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px;background:var(--panel-2)}
+.src .n{font-weight:600;font-size:13.5px}
+.src .m{font-size:12px;color:var(--ink-dim);margin-top:2px}
+.src .m.exp{color:var(--warn)}
+.src a{color:var(--girouette);font-size:12.5px;text-decoration:none;border-bottom:1px solid #ff9e1b55}
+.src .row{display:flex;gap:12px;margin-top:7px;align-items:center;flex-wrap:wrap}
+
+#drop{
+  border:1.5px dashed #38465a;border-radius:10px;padding:22px 14px;text-align:center;
+  background:#131a22;transition:border-color .15s,background .15s
+}
+#drop.hot{border-color:var(--girouette);background:var(--girouette-soft)}
+#drop p{margin:0 0 10px;font-size:13px;color:var(--ink-dim)}
+.btn{
+  background:var(--girouette);color:#20160a;border:0;border-radius:7px;
+  padding:9px 14px;font-weight:650;font-size:13.5px
+}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:550}
+.btn.ghost:hover{border-color:#44576e}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+.field{display:block;margin:0 0 10px}
+.field span{display:block;font-size:12.5px;color:var(--ink-dim);margin-bottom:4px}
+.field input,.field select{
+  width:100%;background:#0f151c;border:1px solid var(--line);border-radius:7px;padding:8px 10px
+}
+.check{display:flex;align-items:center;gap:9px;padding:6px 2px;font-size:13.5px}
+.check input{accent-color:var(--girouette);width:16px;height:16px}
+.swatch{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+.count{margin-left:auto;font-size:12px;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+
+/* ---------- lignes ---------- */
+#lineSearch{margin-bottom:10px}
+.lineitem{
+  display:flex;gap:10px;align-items:center;width:100%;text-align:left;
+  background:none;border:0;border-radius:8px;padding:8px 8px;
+}
+.lineitem:hover{background:var(--panel-2)}
+.lineitem[aria-current="true"]{background:var(--girouette-soft);box-shadow:inset 0 0 0 1px #ff9e1b55}
+.badge{
+  flex:0 0 auto;min-width:36px;text-align:center;border-radius:5px;padding:3px 6px;
+  font-weight:750;font-size:12.5px;letter-spacing:.02em;color:#fff;
+  text-overflow:ellipsis;overflow:hidden;max-width:74px;white-space:nowrap
+}
+.lineitem .t{min-width:0}
+.lineitem .t b{display:block;font-weight:550;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lineitem .t i{display:block;font-style:normal;font-size:11.5px;color:var(--ink-dim)}
+
+/* ---------- détail ligne ---------- */
+#detail .head{display:flex;gap:10px;align-items:flex-start;margin-bottom:12px}
+.pattern{border:1px solid var(--line);border-radius:8px;margin-bottom:10px;overflow:hidden}
+.pattern>button{
+  display:flex;width:100%;gap:8px;align-items:center;background:var(--panel-2);border:0;
+  padding:9px 11px;text-align:left;font-size:13px
+}
+.pattern>button .c{margin-left:auto;font-size:11.5px;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.pattern ol{margin:0;padding:6px 0 8px 0;list-style:none;counter-reset:s}
+.pattern li{
+  position:relative;padding:4px 12px 4px 30px;font-size:13px;cursor:pointer
+}
+.pattern li:hover{background:#1a222c}
+.pattern li::before{
+  content:"";position:absolute;left:13px;top:11px;width:7px;height:7px;border-radius:50%;
+  background:var(--panel);box-shadow:0 0 0 2px currentColor
+}
+.pattern li::after{content:"";position:absolute;left:16px;top:18px;bottom:-4px;width:1px;background:currentColor;opacity:.45}
+.pattern li:last-child::after{display:none}
+.pattern li .cm{color:var(--ink-dim);font-size:11.5px}
+
+/* ---------- navigation ---------- */
+#navlist{list-style:none;margin:10px 0 0;padding:0}
+#navlist li{display:flex;gap:10px;align-items:center;padding:9px 2px;border-bottom:1px solid var(--line)}
+#navlist .d{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:650;color:var(--girouette)}
+#navlist .nm{min-width:0}
+#navlist .nm b{display:block;font-weight:550;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#navlist .nm i{font-style:normal;font-size:11.5px;color:var(--ink-dim)}
+
+/* ---------- direction ---------- */
+.arw{
+  display:inline-block;flex:0 0 auto;color:var(--girouette);font-size:15px;line-height:1;
+  transform:rotate(calc((var(--b,0) - var(--head,0)) * 1deg));transition:transform .18s linear
+}
+.arw.big{font-size:30px}
+.next{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-left:3px solid var(--girouette);
+  border-radius:8px;padding:12px 13px;background:var(--panel-2)}
+.next .nx{min-width:0}
+.next .nx b{display:block;font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.next .nx i{font-style:normal;font-size:12px;color:var(--ink-dim)}
+.next .nd{margin-left:auto;font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--girouette)}
+.mepin{position:relative;width:36px;height:36px}
+.medot{position:absolute;left:12px;top:12px;width:12px;height:12px;border-radius:50%;
+  background:var(--girouette);border:2px solid #fff;box-shadow:0 0 0 1px #0009}
+.mecone{position:absolute;left:13px;top:-2px;width:0;height:0;
+  border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:14px solid var(--girouette);
+  transform-origin:5px 20px;transition:transform .18s linear}
+
+/* ---------- temps réel ---------- */
+.feed{display:flex;align-items:center;gap:9px;padding:8px 2px;border-bottom:1px solid var(--line);font-size:13.5px}
+.feed input{accent-color:var(--girouette);width:16px;height:16px}
+.feed .st{margin-left:auto;font-size:11.5px;color:var(--ink-dim);white-space:nowrap}
+.feed .st.ok{color:var(--ok)} .feed .st.ko{color:var(--err)}
+.alert{border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:7px;padding:10px 11px;margin-bottom:9px;background:var(--panel-2)}
+.alert.sev{border-left-color:var(--err)}
+.alert b{display:block;font-size:13.5px;font-weight:600;margin-bottom:3px}
+.alert p{margin:0;font-size:12.5px;color:var(--ink-dim)}
+.alert .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.tag{font-size:11px;padding:2px 6px;border-radius:4px;background:#0f151c;border:1px solid var(--line);color:var(--ink-dim)}
+.tag.l{color:#14181d;border:0;font-weight:700}
+.delayrow{display:flex;align-items:center;gap:9px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:13px}
+.delayrow .v{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:650}
+.delayrow .v.late{color:var(--warn)} .delayrow .v.early{color:var(--ok)}
+
+/* ---------- carte ---------- */
+.leaflet-container{background:#0b0f14;font:inherit}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--ink);border-radius:8px}
+.leaflet-popup-content{margin:11px 13px;font-size:13px}
+.leaflet-popup-content b{font-size:14px}
+.leaflet-bar a{background:var(--panel);color:var(--ink);border-color:var(--line)}
+.leaflet-bar a:hover{background:var(--panel-2)}
+#mapbtns{position:absolute;right:10px;top:10px;z-index:500;display:flex;flex-direction:column;gap:6px}
+#mapbtns select{
+  background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 8px;
+  font-size:12.5px;font-weight:550;box-shadow:0 2px 8px #0006;max-width:150px
+}
+#mapbtns button{
+  background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 10px;
+  font-size:12.5px;font-weight:550;box-shadow:0 2px 8px #0006
+}
+#mapbtns button[aria-pressed="true"]{background:var(--girouette);color:#20160a;border-color:var(--girouette)}
+#toast{
+  position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:600;
+  background:#0d1218ee;border:1px solid var(--line);border-radius:8px;padding:9px 14px;
+  font-size:13px;max-width:90%;display:none
+}
+#bar{
+  position:absolute;left:0;right:0;top:0;height:3px;background:var(--girouette);
+  width:0;z-index:700;transition:width .2s;display:none
+}
+#sheetbtn{display:none}
+
+/* ---------- mobile ---------- */
+@media (max-width:820px){
+  #app{flex-direction:column}
+  #rail{
+    position:absolute;left:0;right:0;bottom:0;top:auto;width:100%;z-index:800;
+    height:62vh;border-right:0;border-top:1px solid var(--line);
+    border-radius:14px 14px 0 0;transform:translateY(calc(100% - 52px));
+    transition:transform .22s ease;box-shadow:0 -6px 24px #0008
+  }
+  #rail.open{transform:translateY(0)}
+  #sheetbtn{
+    display:block;width:100%;background:none;border:0;padding:14px 16px 10px;
+    text-align:left;font-size:13.5px;font-weight:600;color:var(--ink)
+  }
+  #sheetbtn::before{
+    content:"";display:block;width:38px;height:4px;border-radius:2px;background:#3a4756;
+    margin:-6px auto 10px
+  }
+  #head{padding-top:0}
+  #mapwrap{height:100%}
+  #mapbtns{top:auto;bottom:70px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="rail">
+    <button id="sheetbtn" aria-expanded="false">Données, filtres et lignes</button>
+    <div id="head">
+      <h1>Plan réseaux — Maine-et-Loire</h1>
+      <p>Aléop · Irigo · Ogalo · Choletbus · scolaires et renforts</p>
+      <div id="status"><span id="statusText">Aucune donnée chargée</span></div>
+    </div>
+    <div id="tabs" role="tablist">
+      <button role="tab" id="tab-data" aria-selected="true" aria-controls="pane-data">Données</button>
+      <button role="tab" id="tab-lines" aria-selected="false" aria-controls="pane-lines">Lignes</button>
+      <button role="tab" id="tab-nav" aria-selected="false" aria-controls="pane-nav">Navigation</button>
+      <button role="tab" id="tab-rt" aria-selected="false" aria-controls="pane-rt">Temps réel</button>
+    </div>
+
+    <!-- ============ DONNÉES ============ -->
+    <section class="pane" id="pane-data" role="tabpanel" aria-labelledby="tab-data" data-active>
+      <div class="block">
+        <h2>Charger un fichier GTFS</h2>
+        <p class="hint">Téléchargez le .zip depuis les sources ci-dessous, puis déposez-le ici. Plusieurs réseaux peuvent être cumulés.</p>
+        <div id="drop">
+          <p>Déposez un ou plusieurs .zip GTFS</p>
+          <button class="btn" id="pick">Choisir des fichiers</button>
+          <input type="file" id="file" accept=".zip" multiple hidden>
+        </div>
+        <div class="src" style="margin-top:10px">
+          <div class="row">
+            <button class="btn ghost" id="restore">Recharger les données enregistrées</button>
+            <button class="btn ghost" id="fromServer">Charger donnees.json</button>
+            <button class="btn ghost" id="wipe">Tout effacer</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="block">
+        <h2>Sources officielles (transport.data.gouv.fr)</h2>
+        <div id="sources"></div>
+      </div>
+
+      <div class="block">
+        <h2>Réseaux affichés</h2>
+        <p class="hint" id="agencyHint">Chargez un GTFS pour voir les transporteurs.</p>
+        <div id="agencies"></div>
+      </div>
+
+      <div class="block">
+        <h2>Jour de circulation</h2>
+        <p class="hint">Filtre les lignes et les courses réellement assurées à cette date : les circuits scolaires et les renforts disparaissent hors période scolaire.</p>
+        <label class="field"><span>Date</span><input type="date" id="date"></label>
+        <label class="check"><input type="checkbox" id="allDates"> Ignorer la date (tout afficher)</label>
+      </div>
+
+      <div class="block">
+        <h2>Exports</h2>
+        <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost" id="expStops">Arrêts (CSV)</button>
+          <button class="btn ghost" id="expGeo">Arrêts (GeoJSON)</button>
+          <button class="btn ghost" id="expLines">Lignes (CSV)</button>
+        </div>
+        <p class="hint" style="margin:12px 0 8px">Pour retrouver ces données sur ton téléphone sans redéposer les .zip : exporte le jeu préparé et place le fichier à côté de la page sur ton hébergement. La version allégée abandonne les tracés précis — les lignes sont alors dessinées d'arrêt en arrêt — et pèse beaucoup moins lourd.</p>
+        <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="expBundle">Exporter donnees.json</button>
+          <button class="btn ghost" id="expLight">Version allégée</button>
+        </div>
+      </div>
+      <div class="block">
+        <h2>Sources et licences</h2>
+        <div class="src">
+          <div class="m">
+            <b style="color:var(--ink)">Données</b><br>
+            Région Pays de la Loire — réseau Aléop, circuits scolaires et agrégat Destinéo (ODbL).<br>
+            Angers Loire Métropole — réseau Irigo, GTFS et GTFS-RT (ODbL et conditions particulières d'utilisation).<br>
+            Saumur Val de Loire — réseau Ogalo / Agglobus (ODbL).<br>
+            Diffusion : transport.data.gouv.fr, Point d'Accès National aux données de mobilité.
+          </div>
+          <div class="m" style="margin-top:9px">
+            <b style="color:var(--ink)">Fond de carte</b><br>
+            © les contributeurs OpenStreetMap (ODbL), tuiles diffusées par CARTO.<br>
+            Plan IGN et photographies aériennes : © IGN, Géoplateforme.<br>
+            Vue aérienne monde : Esri, Maxar, Earthstar Geographics.
+          </div>
+          <div class="m" style="margin-top:9px">
+            <b style="color:var(--ink)">Bibliothèques</b><br>
+            Leaflet (BSD 2 clauses), JSZip (MIT). Décodage GTFS-RT écrit pour cette application.
+          </div>
+          <div class="m" style="margin-top:9px">
+            <b style="color:var(--ink)">Application</b><br>
+            © FlowGN, 2026. Ce plan constitue une base dérivée au sens de l'ODbL :
+            toute rediffusion doit conserver ces mentions et rester sous la même licence.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ LIGNES ============ -->
+    <section class="pane" id="pane-lines" role="tabpanel" aria-labelledby="tab-lines">
+      <div id="listWrap">
+        <label class="field" id="lineSearch"><span>Rechercher une ligne ou un arrêt</span>
+          <input id="q" placeholder="ex. 12, Chemillé, Ralliement" autocomplete="off"></label>
+        <div id="lines"></div>
+      </div>
+      <div id="detail" hidden></div>
+    </section>
+
+    <!-- ============ NAVIGATION ============ -->
+    <section class="pane" id="pane-nav" role="tabpanel" aria-labelledby="tab-nav">
+      <div class="block">
+        <h2>Navigation terrain</h2>
+        <p class="hint">Position GPS, arrêts les plus proches et arrêts restants sur la ligne sélectionnée. Fonctionne sans réseau une fois les données enregistrées, en désactivant le fond de carte.</p>
+        <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="geoBtn">Activer ma position</button>
+          <button class="btn ghost" id="followBtn" aria-pressed="false">Recentrer en continu</button>
+          <button class="btn ghost" id="compassBtn">Boussole</button>
+        </div>
+        <p class="hint" id="geoInfo" style="margin-top:10px"></p>
+      </div>
+      <div class="block" id="nextBox" hidden>
+        <h2>Prochain arrêt</h2>
+        <div class="next">
+          <span class="arw big" id="nextArw">▲</span>
+          <span class="nx"><b id="nextName"></b><i id="nextSub"></i></span>
+          <span class="nd" id="nextDist"></span>
+        </div>
+      </div>
+      <div class="block">
+        <h2 id="navTitle">Arrêts les plus proches</h2>
+        <ul id="navlist"></ul>
+      </div>
+    </section>
+
+    <!-- ============ TEMPS RÉEL ============ -->
+    <section class="pane" id="pane-rt" role="tabpanel" aria-labelledby="tab-rt">
+      <div class="block">
+        <h2>Flux GTFS-RT</h2>
+        <p class="hint">Alertes de service, retards et positions des véhicules, décodés directement dans le navigateur.</p>
+        <div id="feeds"></div>
+      </div>
+      <div class="block">
+        <h2>Paramètres</h2>
+        <label class="field"><span>Rafraîchissement</span>
+          <select id="rtEvery">
+            <option value="0">Manuel</option>
+            <option value="20">Toutes les 20 s</option>
+            <option value="30" selected>Toutes les 30 s</option>
+            <option value="60">Toutes les 60 s</option>
+          </select></label>
+        <label class="field"><span>Préfixe proxy CORS (si le flux est refusé par le navigateur)</span>
+          <input id="rtProxy" placeholder="https://mon-proxy.exemple/?url=" autocomplete="off"></label>
+        <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="rtNow">Actualiser maintenant</button>
+          <button class="btn ghost" id="rtVeh" aria-pressed="true">Véhicules sur la carte</button>
+        </div>
+        <p class="hint" id="rtStatus" style="margin-top:10px"></p>
+      </div>
+      <div class="block">
+        <h2 id="rtAlertTitle">Alertes de service</h2>
+        <div id="rtAlerts"><p class="hint">Aucun flux chargé.</p></div>
+      </div>
+      <div class="block">
+        <h2 id="rtDelayTitle">Retards par ligne</h2>
+        <div id="rtDelays"></div>
+      </div>
+    </section>
+  </aside>
+
+  <div id="mapwrap">
+    <div id="bar"></div>
+    <div id="map"></div>
+    <div id="mapbtns">
+      <select id="tileSel" title="Choix du fond de carte"></select>
+      <button id="tilesBtn" aria-pressed="true" title="Afficher ou masquer le fond">Fond de carte</button>
+      <button id="shapesBtn" aria-pressed="true" title="Tracés des lignes">Tracés</button>
+      <button id="fitBtn" title="Cadrer sur les données">Cadrer</button>
+    </div>
+    <div id="toast"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+"use strict";
+
+/* =====================================================================
+   1. Sources officielles (relevées sur transport.data.gouv.fr)
+   ===================================================================== */
+const SOURCES = [
+  { n:"GTFS Destinéo — agrégat Pays de la Loire",
+    m:"Aléop (44/49/53/72/85), Irigo, Choletbus, Ogalo/Agglobus, TER… — validité 06/09/2026 → 31/08/2027. Le plus complet, mais aussi le plus lourd.",
+    zip:"https://mobi-iti-pdl.okina.fr/static/mobiiti_technique/gtfs_global.zip",
+    page:"https://transport.data.gouv.fr/datasets/arrets-horaires-et-circuits-des-lignes-de-transports-en-commun-en-pays-de-la-loire-gtfs-destineo-reseaux-aom-aleop-1" },
+  { n:"GTFS Aléop — réseau interurbain régional",
+    m:"Données de travail de la Direction des transports de la Région. Filtrer l'agence « Aléop en Maine-et-Loire ». Le fichier stops contient la commune. Validité 01/09/2025 → 02/07/2027.",
+    zip:"https://donnees.paysdelaloire.fr/data/pdl.zip",
+    page:"https://transport.data.gouv.fr/datasets/arrets-horaires-et-circuits-des-lignes-de-transports-aleop-1" },
+  { n:"GTFS scolaire 49 — circuits Aléop Maine-et-Loire",
+    m:"Les circuits spéciaux scolaires du réseau régional, absents du GTFS Aléop classique. C'est le fichier à charger pour voir les 400 et quelques circuits du 49.",
+    zip:"https://donnees.paysdelaloire.fr/data/pdlsco49.zip" },
+  { n:"GTFS scolaire — toute la région",
+    m:"Même contenu pour les cinq départements. Plus lourd : ne le prends que si tu as besoin des limites départementales.",
+    zip:"https://donnees.paysdelaloire.fr/data/pdlscoFull.zip" },
+  { n:"GTFS Irigo — Angers Loire Métropole",
+    m:"Bus et tramway. Validité 31/08/2026 → 02/07/2027, aucune erreur de validation.",
+    zip:"https://chouette.enroute.mobi/api/v1/datas/Irigo/gtfs.zip",
+    page:"https://transport.data.gouv.fr/datasets/angers-loire-metropole-reseau-irigo-gtfs-gtfs-rt-siri" },
+  { n:"GTFS Ogalo — Saumur Val de Loire",
+    m:"Flux propre au réseau, signalé périmé depuis le 31/08/2026 : préférer l'agrégat Destinéo (agence saumuragglobus) pour du courant.",
+    exp:true,
+    zip:"https://mobi-iti-pdl.okina.fr/static/mobiiti_saumur_val_de_loire/gtfs_imported-id_saumur.zip",
+    page:"https://transport.data.gouv.fr/datasets/lignes-arrets-et-horaires-theorique-du-reseau-de-transport-gtfs-netex-saumur-val-de-loire-agglomeration" },
+  { n:"GTFS-Flex Aléop — transport à la demande",
+    m:"TAD zonal des Pays de la Loire, extension GTFS-Flex : zones de desserte, pas d'horaires fixes.",
+    zip:null,
+    page:"https://transport.data.gouv.fr/datasets/transports-a-la-demande-en-pays-de-la-loire-gtfs-flex-aleop" },
+  { n:"Mooj ! — Mauges Communauté",
+    m:"Aucun flux GTFS publié sur le Point d'Accès National à ce jour. Les lignes A1/A2 et les circuits scolaires internes ne sont donc pas dans les fichiers ci-dessus : à demander au service Mobilités de Mauges Communauté.",
+    zip:null,
+    page:"https://www.mooj.fr/" }
+];
+
+/* =====================================================================
+   2. Utilitaires
+   ===================================================================== */
+const $ = s => document.querySelector(s);
+const el = (t,c,x)=>{const e=document.createElement(t); if(c)e.className=c; if(x!=null)e.textContent=x; return e;};
+let toastT;
+function toast(msg, ms=3600){
+  const t=$("#toast"); t.textContent=msg; t.style.display="block";
+  clearTimeout(toastT); toastT=setTimeout(()=>t.style.display="none", ms);
+}
+function progress(p){
+  const b=$("#bar");
+  if(p==null){ b.style.display="none"; b.style.width="0"; return; }
+  b.style.display="block"; b.style.width=Math.max(2,Math.round(p*100))+"%";
+}
+const yieldUI = ()=>new Promise(r=>setTimeout(r,0));
+
+/** CSV rapide : découpage par lignes, parsing complet seulement si guillemets. */
+function csvParse(text, onRow){
+  if(!text) return null;
+  if(text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  const lines = text.split("\n");
+  let header=null;
+  for(let i=0;i<lines.length;i++){
+    let l=lines[i];
+    if(l.endsWith("\r")) l=l.slice(0,-1);
+    if(!l) continue;
+    const row = l.indexOf('"')<0 ? l.split(",") : csvLine(l);
+    if(!header){ header=row.map(h=>h.trim()); continue; }
+    onRow(row, header);
+  }
+  return header;
+}
+function csvLine(l){
+  const out=[]; let f="",q=false;
+  for(let i=0;i<l.length;i++){
+    const c=l[i];
+    if(q){ if(c==='"'){ if(l[i+1]==='"'){f+='"';i++;} else q=false; } else f+=c; }
+    else if(c==='"') q=true;
+    else if(c===","){ out.push(f); f=""; }
+    else f+=c;
+  }
+  out.push(f); return out;
+}
+const idx = (h,name)=> h ? h.indexOf(name) : -1;
+const num = v => { const n=parseFloat(v); return isNaN(n)?null:n; };
+const ymd = d => d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate();
+function hav(a,b,c,d){ // mètres
+  const R=6371000, p=Math.PI/180;
+  const s1=Math.sin((c-a)*p/2), s2=Math.sin((d-b)*p/2);
+  return 2*R*Math.asin(Math.sqrt(s1*s1+Math.cos(a*p)*Math.cos(c*p)*s2*s2));
+}
+function fmtDist(m){ return m<1000 ? Math.round(m)+" m" : (m/1000).toFixed(m<10000?1:0)+" km"; }
+function download(name, text, mime){
+  const b=new Blob([text],{type:mime||"text/plain;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+
+/* =====================================================================
+   3. Modèle en mémoire
+   ===================================================================== */
+const DB = {
+  sources:[],                 // [{name, agencies:[..], stops, routes, trips}]
+  agencies:new Map(),         // aid -> {id,name,src,on:true,color}
+  stops:[],                   // {id,name,code,lat,lon,commune,routes:Set}
+  stopIdx:new Map(),          // "src|stop_id" -> index
+  routes:new Map(),           // rid -> {id,short,long,color,text,aid,type,patterns:[]}
+  patterns:[],                // {rid,dir,hs,stops:[i],shape:[[lat,lon]],trips:{svc:count},total}
+  services:new Map()          // sid -> {mask,start,end,add:Set,rem:Set}
+};
+function autoColor(i){ const p=["#ff9e1b","#4ec9a5","#6aa9ff","#c792ea","#f28fad","#8bd450","#ffd166","#7fdbff"]; return p[i%p.length]; }
+
+/* =====================================================================
+   4. Lecture d'un GTFS (.zip)
+   ===================================================================== */
+async function readZip(file, label){
+  progress(0.02);
+  const zip = await JSZip.loadAsync(file);
+  const get = async n => {
+    const f = zip.file(n) || zip.file(new RegExp("(^|/)"+n+"$"))[0];
+    return f ? f.async("string") : null;
+  };
+  const src = label || file.name.replace(/\.zip$/i,"");
+
+  /* --- agences --- */
+  progress(0.08);
+  const agTxt = await get("agency.txt");
+  const localAg = new Map();
+  if(agTxt){
+    let C=null;
+    csvParse(agTxt, (r,h)=>{
+      if(!C) C={id:idx(h,"agency_id"), nm:idx(h,"agency_name")};
+      const id=(C.id>=0?r[C.id]:"")||"AG";
+      localAg.set(id, (C.nm>=0?r[C.nm]:id)||id);
+    });
+  }
+  if(localAg.size===0) localAg.set("AG", src);
+  for(const [id,nm] of localAg){
+    const key = src+"|"+id;
+    if(!DB.agencies.has(key))
+      DB.agencies.set(key,{id:key, name:nm, src, on:true, color:autoColor(DB.agencies.size)});
+  }
+
+  /* --- arrêts --- */
+  progress(0.16);
+  const stTxt = await get("stops.txt");
+  if(!stTxt) throw new Error("stops.txt absent de "+src);
+  let C=null;
+  csvParse(stTxt, (r,h)=>{
+    if(!C) C={ id:idx(h,"stop_id"), nm:idx(h,"stop_name"), la:idx(h,"stop_lat"), lo:idx(h,"stop_lon"),
+               cd:idx(h,"stop_code"), lt:idx(h,"location_type"),
+               cm:h.findIndex(x=>/commune|city|ville/i.test(x)) };
+    if(C.lt>=0 && r[C.lt]==="1") return;             // on ignore les stations mères
+    const lat=num(r[C.la]), lon=num(r[C.lo]);
+    if(lat==null||lon==null) return;
+    const key = src+"|"+r[C.id];
+    if(DB.stopIdx.has(key)) return;
+    DB.stopIdx.set(key, DB.stops.length);
+    DB.stops.push({ id:r[C.id], key, name:(r[C.nm]||"").trim(), code:C.cd>=0?r[C.cd]:"",
+      lat:+lat.toFixed(6), lon:+lon.toFixed(6),
+      commune:C.cm>=0?(r[C.cm]||"").trim():"", src, routes:new Set() });
+  });
+
+  /* --- calendriers --- */
+  progress(0.24);
+  const calTxt = await get("calendar.txt");
+  if(calTxt){
+    let K=null;
+    csvParse(calTxt, (r,h)=>{
+      if(!K) K={ s:idx(h,"service_id"), a:idx(h,"start_date"), b:idx(h,"end_date"),
+                 d:["monday","tuesday","wednesday","thursday","friday","saturday","sunday"].map(x=>idx(h,x)) };
+      DB.services.set(src+"|"+r[K.s], {
+        mask:K.d.map(i=> i>=0 && r[i]==="1"),
+        start:+r[K.a]||0, end:+r[K.b]||99999999, add:new Set(), rem:new Set()
+      });
+    });
+  }
+  const cdTxt = await get("calendar_dates.txt");
+  if(cdTxt){
+    let K=null;
+    csvParse(cdTxt, (r,h)=>{
+      if(!K) K={ s:idx(h,"service_id"), d:idx(h,"date"), t:idx(h,"exception_type") };
+      const k=src+"|"+r[K.s];
+      let s=DB.services.get(k);
+      if(!s){ s={mask:[false,false,false,false,false,false,false],start:0,end:99999999,add:new Set(),rem:new Set()}; DB.services.set(k,s); }
+      (r[K.t]==="2" ? s.rem : s.add).add(+r[K.d]);
+    });
+  }
+
+  /* --- lignes --- */
+  progress(0.3);
+  const rtTxt = await get("routes.txt");
+  if(!rtTxt) throw new Error("routes.txt absent de "+src);
+  let R=null;
+  csvParse(rtTxt, (r,h)=>{
+    if(!R) R={ i:idx(h,"route_id"), s:idx(h,"route_short_name"), l:idx(h,"route_long_name"),
+               c:idx(h,"route_color"), t:idx(h,"route_text_color"), a:idx(h,"agency_id"), ty:idx(h,"route_type") };
+    const key=src+"|"+r[R.i];
+    const aid = src+"|"+((R.a>=0 && r[R.a]) ? r[R.a] : localAg.keys().next().value);
+    DB.routes.set(key,{
+      id:key, rawId:r[R.i], src,
+      short:(R.s>=0?r[R.s]:"")||"", long:(R.l>=0?r[R.l]:"")||"",
+      color:(R.c>=0&&r[R.c])?"#"+r[R.c].replace("#",""):null,
+      text:(R.t>=0&&r[R.t])?"#"+r[R.t].replace("#",""):"#ffffff",
+      aid: DB.agencies.has(aid)?aid:(src+"|"+localAg.keys().next().value),
+      type: R.ty>=0?+r[R.ty]:3, patterns:[]
+    });
+  });
+
+  /* --- courses --- */
+  progress(0.38);
+  const trTxt = await get("trips.txt");
+  if(!trTxt) throw new Error("trips.txt absent de "+src);
+  const trips=new Map();
+  let T=null;
+  csvParse(trTxt, (r,h)=>{
+    if(!T) T={ t:idx(h,"trip_id"), r:idx(h,"route_id"), s:idx(h,"service_id"),
+               d:idx(h,"direction_id"), hs:idx(h,"trip_headsign"), sh:idx(h,"shape_id") };
+    trips.set(r[T.t], { rid:src+"|"+r[T.r], svc:src+"|"+r[T.s],
+      dir:T.d>=0?(r[T.d]||"0"):"0", hs:T.hs>=0?(r[T.hs]||""):"", shape:T.sh>=0?r[T.sh]:"" , seq:[] });
+  });
+
+  /* --- horaires : on ne garde que la séquence d'arrêts --- */
+  progress(0.48);
+  const sTxt = await get("stop_times.txt");
+  if(!sTxt) throw new Error("stop_times.txt absent de "+src);
+  let S=null;
+  csvParse(sTxt, (r,h)=>{
+    if(!S) S={ t:idx(h,"trip_id"), s:idx(h,"stop_id"), q:idx(h,"stop_sequence") };
+    const t=trips.get(r[S.t]); if(!t) return;
+    const si=DB.stopIdx.get(src+"|"+r[S.s]); if(si===undefined) return;
+    t.seq.push([+r[S.q]||t.seq.length, si]);
+  });
+  await yieldUI();
+
+  /* --- tracés --- */
+  progress(0.66);
+  const shTxt = await get("shapes.txt");
+  const shapes=new Map();
+  if(shTxt){
+    let H=null;
+    csvParse(shTxt, (r,h)=>{
+      if(!H) H={ i:idx(h,"shape_id"), a:idx(h,"shape_pt_lat"), o:idx(h,"shape_pt_lon"), q:idx(h,"shape_pt_sequence") };
+      const la=num(r[H.a]), lo=num(r[H.o]); if(la==null||lo==null) return;
+      let a=shapes.get(r[H.i]); if(!a){ a=[]; shapes.set(r[H.i],a); }
+      a.push([+r[H.q]||a.length, +la.toFixed(5), +lo.toFixed(5)]);
+    });
+    for(const [k,a] of shapes){ a.sort((x,y)=>x[0]-y[0]); shapes.set(k, a.map(p=>[p[1],p[2]])); }
+  }
+
+  /* --- regroupement en missions (patterns) --- */
+  progress(0.8);
+  const groups=new Map();
+  for(const t of trips.values()){
+    if(!t.seq.length) continue;
+    t.seq.sort((a,b)=>a[0]-b[0]);
+    const stops=t.seq.map(p=>p[1]);
+    const key=t.rid+"|"+t.dir+"|"+stops.join(",");
+    let g=groups.get(key);
+    if(!g){ g={rid:t.rid, dir:t.dir, hs:t.hs, stops, shape:shapes.get(t.shape)||null, trips:{}, total:0}; groups.set(key,g); }
+    if(!g.shape && shapes.get(t.shape)) g.shape=shapes.get(t.shape);
+    g.trips[t.svc]=(g.trips[t.svc]||0)+1; g.total++;
+  }
+  for(const g of groups.values()){
+    const r=DB.routes.get(g.rid); if(!r) continue;
+    const pi=DB.patterns.length; DB.patterns.push(g); r.patterns.push(pi);
+    for(const si of g.stops) DB.stops[si].routes.add(g.rid);
+  }
+  DB.sources.push({ name:src, stops:DB.stopIdx.size, routes:DB.routes.size, patterns:DB.patterns.length });
+  progress(1); setTimeout(()=>progress(null),300);
+}
+
+/* =====================================================================
+   5. Calendrier : un service circule-t-il à cette date ?
+   ===================================================================== */
+function serviceActive(sid, date){
+  const s=DB.services.get(sid);
+  if(!s) return true;                       // pas de calendrier => on n'exclut pas
+  if(s.rem.has(date)) return false;
+  if(s.add.has(date)) return true;
+  if(date<s.start || date>s.end) return false;
+  const d=new Date(Math.floor(date/10000), Math.floor(date/100)%100-1, date%100);
+  return !!s.mask[(d.getDay()+6)%7];
+}
+function patternTrips(p, date){
+  if(date==null) return p.total;
+  let n=0; for(const sid in p.trips) if(serviceActive(sid,date)) n+=p.trips[sid];
+  return n;
+}
+
+/* =====================================================================
+   6. Carte
+   ===================================================================== */
+const map = L.map("map",{zoomControl:true, preferCanvas:true}).setView([47.42,-0.66],9);
+/* Fonds de carte : les serveurs bénévoles d'OpenStreetMap interdisent l'usage
+   applicatif direct, on passe donc par des diffuseurs qui l'autorisent. */
+const TILES=[
+  {n:"Fond sombre", u:"https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+   o:{maxZoom:20, subdomains:"abcd", attribution:"© OpenStreetMap · © CARTO"}},
+  {n:"Fond clair", u:"https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+   o:{maxZoom:20, subdomains:"abcd", attribution:"© OpenStreetMap · © CARTO"}},
+  {n:"Fond détaillé", u:"https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+   o:{maxZoom:20, subdomains:"abcd", attribution:"© OpenStreetMap · © CARTO"}},
+  {n:"Plan IGN", u:"https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"+
+     "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png"+
+     "&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
+   o:{maxZoom:19, attribution:"© IGN — Géoplateforme"}},
+  {n:"Photo aérienne IGN", u:"https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"+
+     "&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg"+
+     "&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
+   o:{maxZoom:19, attribution:"© IGN — Géoplateforme"}},
+  {n:"Vue aérienne monde", u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+   o:{maxZoom:19, attribution:"Esri, Maxar, Earthstar Geographics"}}
+];
+let tiles=null, tileIdx=0, tilesOn=true;
+function setTiles(i){
+  tileIdx=+i;
+  if(tiles) map.removeLayer(tiles);
+  tiles=L.tileLayer(TILES[tileIdx].u, TILES[tileIdx].o);
+  if(tilesOn) tiles.addTo(map);
+}
+setTiles(0);
+const canvas = L.canvas({padding:.4});
+const layerLines = L.layerGroup().addTo(map);
+const layerStops = L.layerGroup().addTo(map);
+const layerSel   = L.layerGroup().addTo(map);
+const layerMe    = L.layerGroup().addTo(map);
+const layerRT    = L.layerGroup().addTo(map);
+
+let showShapes = true;
+let selectedRoute = null, selectedPattern = null, highlightStop = null;
+
+function currentDate(){ return $("#allDates").checked ? null : +$("#date").value.replace(/-/g,""); }
+function agencyOn(aid){ const a=DB.agencies.get(aid); return a? a.on : true; }
+function routeColor(r){ return r.color || (DB.agencies.get(r.aid)||{}).color || "#ff9e1b"; }
+
+function visibleRoutes(){
+  const date=currentDate(), out=[];
+  for(const r of DB.routes.values()){
+    if(!agencyOn(r.aid)) continue;
+    let n=0; for(const pi of r.patterns) n+=patternTrips(DB.patterns[pi],date);
+    if(date!=null && n===0) continue;
+    out.push({r, trips:n});
+  }
+  out.sort((a,b)=>{
+    const A=a.r.short||a.r.long, B=b.r.short||b.r.long;
+    return A.localeCompare(B,"fr",{numeric:true});
+  });
+  return out;
+}
+
+function drawMap(){
+  layerLines.clearLayers(); layerStops.clearLayers();
+  const date=currentDate();
+  const shown=new Set();
+  const rs=visibleRoutes();
+
+  if(showShapes){
+    let drawn=0;
+    for(const {r} of rs){
+      for(const pi of r.patterns){
+        const p=DB.patterns[pi];
+        if(date!=null && patternTrips(p,date)===0) continue;
+        const pts = p.shape || p.stops.map(i=>[DB.stops[i].lat, DB.stops[i].lon]);
+        if(pts.length<2) continue;
+        L.polyline(pts,{color:routeColor(r),weight:2,opacity:.55,renderer:canvas}).addTo(layerLines);
+        if(++drawn>2500) break;
+      }
+      if(drawn>2500) break;
+    }
+  }
+  for(const {r} of rs){
+    for(const pi of r.patterns){
+      const p=DB.patterns[pi];
+      if(date!=null && patternTrips(p,date)===0) continue;
+      for(const si of p.stops) shown.add(si);
+    }
+  }
+  for(const si of shown){
+    const s=DB.stops[si];
+    L.circleMarker([s.lat,s.lon],{
+      radius:3.4, color:"#0e1319", weight:1, fillColor:"#cfe0ef", fillOpacity:.95, renderer:canvas
+    }).addTo(layerStops).on("click",()=>popStop(si));
+  }
+  $("#statusText").innerHTML = "<b>"+shown.size.toLocaleString("fr-FR")+"</b> arrêts · <b>"+
+    rs.length.toLocaleString("fr-FR")+"</b> lignes"+(date!=null?" le "+$("#date").value.split("-").reverse().join("/"):"");
+  return shown;
+}
+
+function popStop(si){
+  const s=DB.stops[si];
+  const names=[...s.routes].filter(rid=>DB.routes.has(rid) && agencyOn(DB.routes.get(rid).aid))
+    .map(rid=>{const r=DB.routes.get(rid); return r.short||r.long;});
+  const uniq=[...new Set(names)].slice(0,24);
+  L.popup().setLatLng([s.lat,s.lon]).setContent(
+    "<b>"+esc(s.name)+"</b><br>"+
+    (s.commune?esc(s.commune)+"<br>":"")+
+    (s.code?"Code "+esc(s.code)+"<br>":"")+
+    "<span style='color:#93a3b3'>"+s.lat.toFixed(5)+", "+s.lon.toFixed(5)+"</span>"+
+    (uniq.length?"<br><br>Lignes : "+esc(uniq.join(", ")):"")
+  ).openOn(map);
+}
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function fitAll(){
+  const b=L.latLngBounds([]);
+  layerStops.eachLayer(l=>b.extend(l.getLatLng()));
+  if(b.isValid()) map.fitBounds(b,{padding:[24,24]});
+}
+
+/* =====================================================================
+   7. Panneau lignes
+   ===================================================================== */
+let agDupes=null;
+function agLabel(aid){
+  const a=DB.agencies.get(aid); if(!a) return "";
+  if(!agDupes){
+    const c=new Map();
+    for(const x of DB.agencies.values()) c.set(x.name,(c.get(x.name)||0)+1);
+    agDupes=new Set([...c].filter(([,n])=>n>1).map(([k])=>k));
+  }
+  return agDupes.has(a.name) ? a.name+" · "+a.src : a.name;
+}
+
+function renderAgencies(){
+  const box=$("#agencies"); box.innerHTML="";
+  if(!DB.agencies.size){ $("#agencyHint").textContent="Chargez un GTFS pour voir les transporteurs."; return; }
+  $("#agencyHint").textContent="Décochez pour masquer un réseau de la carte et des listes.";
+  const counts=new Map();
+  for(const r of DB.routes.values()) counts.set(r.aid,(counts.get(r.aid)||0)+1);
+  const sorted=[...DB.agencies.values()].sort((a,b)=>a.name.localeCompare(b.name,"fr"));
+  for(const a of sorted){
+    const l=el("label","check");
+    const c=document.createElement("input"); c.type="checkbox"; c.checked=a.on;
+    c.onchange=()=>{ a.on=c.checked; drawMap(); renderLines(); };
+    const sw=el("span","swatch"); sw.style.background=a.color;
+    l.append(c,sw,el("span",null,agLabel(a.id)),el("span","count",(counts.get(a.id)||0)+" lignes"));
+    box.append(l);
+  }
+}
+
+function renderLines(){
+  const box=$("#lines"); box.innerHTML="";
+  const q=$("#q").value.trim().toLowerCase();
+  let rs=visibleRoutes();
+
+  if(q){
+    const stopHits=new Set();
+    for(const s of DB.stops)
+      if(s.name.toLowerCase().includes(q)||(s.commune||"").toLowerCase().includes(q))
+        for(const rid of s.routes) stopHits.add(rid);
+    rs=rs.filter(({r})=>
+      (r.short||"").toLowerCase().includes(q) ||
+      (r.long||"").toLowerCase().includes(q) ||
+      stopHits.has(r.id));
+  }
+  if(!rs.length){ box.append(el("p","hint", DB.routes.size? "Aucune ligne ne correspond." : "Aucune donnée chargée.")); return; }
+
+  for(const {r,trips} of rs.slice(0,600)){
+    const b=el("button","lineitem");
+    b.setAttribute("aria-current", selectedRoute===r.id ? "true":"false");
+    const bd=el("span","badge", r.short || (r.long||"").slice(0,6));
+    bd.style.background=routeColor(r); bd.style.color=pickInk(routeColor(r));
+    const t=el("span","t");
+    t.append(el("b",null,r.long||r.short),
+             el("i",null,agLabel(r.aid)+" · "+trips+" course"+(trips>1?"s":"")));
+    b.append(bd,t);
+    b.onclick=()=>openRoute(r.id);
+    box.append(b);
+  }
+  if(rs.length>600) box.append(el("p","hint",rs.length+" lignes trouvées, 600 affichées. Affinez la recherche."));
+}
+function pickInk(hex){
+  const c=hex.replace("#",""); if(c.length<6) return "#111";
+  const r=parseInt(c.slice(0,2),16),g=parseInt(c.slice(2,4),16),b=parseInt(c.slice(4,6),16);
+  return (r*299+g*587+b*114)/1000>150 ? "#14181d" : "#fff";
+}
+
+function openRoute(rid){
+  selectedRoute=rid; selectedPattern=null;
+  const r=DB.routes.get(rid), date=currentDate();
+  const d=$("#detail"); d.innerHTML=""; d.hidden=false; $("#listWrap").hidden=true;
+
+  const back=el("button","btn ghost","← Toutes les lignes");
+  back.style.marginBottom="12px";
+  back.onclick=()=>{ selectedRoute=null; selectedPattern=null; d.hidden=true; $("#listWrap").hidden=false;
+                     layerSel.clearLayers(); renderLines(); };
+  d.append(back);
+
+  const head=el("div","head");
+  const bd=el("span","badge", r.short||"—");
+  bd.style.background=routeColor(r); bd.style.color=pickInk(routeColor(r)); bd.style.fontSize="14px"; bd.style.padding="6px 9px";
+  const ti=el("div"); ti.append(el("b",null,r.long||r.short));
+  ti.append(el("div","hint",agLabel(r.aid)));
+  head.append(bd,ti); d.append(head);
+
+  const pats=r.patterns.map(i=>({i,p:DB.patterns[i],n:patternTrips(DB.patterns[i],date)}))
+                       .filter(x=>date==null||x.n>0)
+                       .sort((a,b)=>b.n-a.n);
+  if(!pats.length) d.append(el("p","hint","Aucune course à cette date."));
+
+  pats.forEach(({i,p,n},k)=>{
+    const wrap=el("div","pattern");
+    const bt=el("button");
+    const dot=el("span","swatch"); dot.style.background=routeColor(r);
+    const lbl=el("span",null, (p.hs||"Sens "+p.dir)+" · "+p.stops.length+" arrêts");
+    const cnt=el("span","c", n+" course"+(n>1?"s":"")+(n<=2?" (renfort)":""));
+    bt.append(dot,lbl,cnt);
+    const ol=document.createElement("ol");
+    ol.style.color=routeColor(r); ol.hidden = k!==0;
+    p.stops.forEach(si=>{
+      const s=DB.stops[si];
+      const li=document.createElement("li");
+      li.append(document.createTextNode(s.name));
+      if(s.commune) li.append(el("span","cm"," — "+s.commune));
+      li.onclick=()=>{ map.setView([s.lat,s.lon],16); popStop(si); };
+      ol.append(li);
+    });
+    bt.onclick=()=>{ ol.hidden=!ol.hidden; if(!ol.hidden) highlightPattern(i); };
+    wrap.append(bt,ol); d.append(wrap);
+    if(k===0) highlightPattern(i);
+  });
+
+  const exp=el("button","btn ghost","Exporter la ligne (CSV)");
+  exp.style.marginTop="6px";
+  exp.onclick=()=>exportRoute(r,pats);
+  d.append(exp);
+}
+
+function highlightPattern(pi){
+  selectedPattern=pi;
+  layerSel.clearLayers();
+  const p=DB.patterns[pi], r=DB.routes.get(p.rid);
+  const pts = p.shape || p.stops.map(i=>[DB.stops[i].lat,DB.stops[i].lon]);
+  L.polyline(pts,{color:"#fff",weight:7,opacity:.28}).addTo(layerSel);
+  L.polyline(pts,{color:routeColor(r),weight:4,opacity:1}).addTo(layerSel);
+  p.stops.forEach((si,k)=>{
+    const s=DB.stops[si];
+    L.circleMarker([s.lat,s.lon],{radius:5,color:"#0e1319",weight:2,fillColor:"#fff",fillOpacity:1})
+      .addTo(layerSel).bindTooltip((k+1)+". "+s.name,{direction:"top"}).on("click",()=>popStop(si));
+  });
+  const b=L.latLngBounds(pts); if(b.isValid()) map.fitBounds(b,{padding:[30,30]});
+  renderNav();
+}
+
+/* =====================================================================
+   8. Navigation
+   ===================================================================== */
+let me=null, watchId=null, follow=false, heading=null, gpsHead=null, meMarker=null, lastOri=0;
+
+/* Relèvement en degrés depuis le nord, de la position vers un point. */
+function bearing(a,b,c,d){
+  const p=Math.PI/180, y=Math.sin((d-b)*p)*Math.cos(c*p);
+  const x=Math.cos(a*p)*Math.sin(c*p)-Math.sin(a*p)*Math.cos(c*p)*Math.cos((d-b)*p);
+  return (Math.atan2(y,x)/p+360)%360;
+}
+const CARD=["nord","nord-est","est","sud-est","sud","sud-ouest","ouest","nord-ouest"];
+const REL=["droit devant","devant à droite","sur ta droite","derrière à droite",
+           "derrière toi","derrière à gauche","sur ta gauche","devant à gauche"];
+const cardinal = b => CARD[Math.round(b/45)%8];
+function applyHeading(){
+  document.documentElement.style.setProperty("--head", heading==null?0:heading);
+  const c=document.getElementById("mecone");
+  if(c){ c.style.display = heading==null?"none":"block"; c.style.transform="rotate("+(heading||0)+"deg)"; }
+}
+
+$("#geoBtn").onclick=()=>{
+  if(!navigator.geolocation){ toast("Géolocalisation indisponible sur cet appareil."); return; }
+  if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; me=null; meMarker=null;
+    layerMe.clearLayers(); $("#geoBtn").textContent="Activer ma position"; $("#geoInfo").textContent=""; renderNav(); return; }
+  $("#geoBtn").textContent="Arrêter le suivi";
+  watchId=navigator.geolocation.watchPosition(pos=>{
+    me={lat:pos.coords.latitude, lon:pos.coords.longitude, acc:pos.coords.accuracy};
+    // en mouvement, le cap GPS est plus fiable que la boussole
+    const h=pos.coords.heading, sp=pos.coords.speed;
+    if(h!=null && !isNaN(h) && sp!=null && sp>0.7){ gpsHead=h; heading=h; }
+    else gpsHead=null;
+    layerMe.clearLayers();
+    L.circle([me.lat,me.lon],{radius:me.acc,color:"#ff9e1b",weight:1,fillOpacity:.08}).addTo(layerMe);
+    meMarker=L.marker([me.lat,me.lon],{interactive:false, icon:L.divIcon({className:"",iconSize:[36,36],iconAnchor:[18,18],
+      html:'<div class="mepin"><div class="mecone" id="mecone"></div><div class="medot"></div></div>'})}).addTo(layerMe);
+    applyHeading();
+    $("#geoInfo").textContent="Position à ±"+Math.round(me.acc)+" m"+
+      (heading!=null?" · cap "+Math.round(heading)+"° ("+cardinal(heading)+")":" · cap inconnu, active la boussole");
+    if(follow) map.setView([me.lat,me.lon], Math.max(map.getZoom(),15));
+    renderNav();
+  }, err=>{ toast("Position refusée ou indisponible ("+err.code+")."); $("#geoBtn").textContent="Activer ma position"; },
+  {enableHighAccuracy:true, maximumAge:5000, timeout:20000});
+};
+$("#followBtn").onclick=e=>{
+  follow=!follow; e.currentTarget.setAttribute("aria-pressed",follow?"true":"false");
+  if(follow&&me) map.setView([me.lat,me.lon],Math.max(map.getZoom(),15));
+};
+
+/* Boussole : iOS exige une autorisation explicite déclenchée par un geste. */
+function onOri(e){
+  if(gpsHead!=null) return;                       // le cap GPS prime
+  let h=null;
+  if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
+  else if(e.alpha!=null && (e.absolute||e.type==="deviceorientationabsolute")) h=(360-e.alpha)%360;
+  if(h==null) return;
+  heading=h;
+  const now=Date.now();
+  if(now-lastOri<120) return;                      // on limite le rafraîchissement
+  lastOri=now; applyHeading();
+}
+$("#compassBtn").onclick=async e=>{
+  try{
+    if(typeof DeviceOrientationEvent!=="undefined" && DeviceOrientationEvent.requestPermission){
+      const p=await DeviceOrientationEvent.requestPermission();
+      if(p!=="granted"){ toast("Accès à la boussole refusé."); return; }
+    }
+    window.addEventListener("deviceorientationabsolute", onOri, true);
+    window.addEventListener("deviceorientation", onOri, true);
+    e.currentTarget.setAttribute("aria-pressed","true");
+    toast("Boussole activée : les flèches pointent depuis ta direction.");
+  }catch(err){ toast("Boussole indisponible sur cet appareil."); }
+};
+
+function renderNav(){
+  const ul=$("#navlist"); ul.innerHTML="";
+  const nb=$("#nextBox"); nb.hidden=true;
+  if(!DB.stops.length){ ul.append(el("li",null,"Aucune donnée chargée.")); return; }
+  if(!me){ $("#navTitle").textContent="Arrêts les plus proches";
+           ul.append(el("li",null,"Activez la position pour classer les arrêts par distance.")); return; }
+
+  let items;
+  if(selectedPattern!=null){
+    const p=DB.patterns[selectedPattern], r=DB.routes.get(p.rid);
+    $("#navTitle").textContent="Arrêts restants — "+(r.short||r.long);
+    let best=0,bd=Infinity;
+    p.stops.forEach((si,k)=>{ const s=DB.stops[si]; const d=hav(me.lat,me.lon,s.lat,s.lon); if(d<bd){bd=d;best=k;} });
+    items=p.stops.slice(best).map((si,k)=>({si,k:best+k+1}));
+  }else{
+    $("#navTitle").textContent="Arrêts les plus proches";
+    const date=currentDate(), ok=new Set();
+    for(const r of DB.routes.values()){
+      if(!agencyOn(r.aid)) continue;
+      for(const pi of r.patterns){ const p=DB.patterns[pi];
+        if(date!=null && patternTrips(p,date)===0) continue;
+        for(const si of p.stops) ok.add(si); }
+    }
+    items=[...ok].map(si=>({si,d:hav(me.lat,me.lon,DB.stops[si].lat,DB.stops[si].lon)}))
+                 .sort((a,b)=>a.d-b.d).slice(0,25);
+  }
+
+  /* bloc prochain arrêt : le suivant sur la mission, sinon le plus proche */
+  const first = selectedPattern!=null && items.length>1 ? items[1] : items[0];
+  if(first){
+    const s=DB.stops[first.si], b=bearing(me.lat,me.lon,s.lat,s.lon);
+    nb.hidden=false;
+    $("#nextArw").style.setProperty("--b", b);
+    $("#nextName").textContent=s.name;
+    $("#nextSub").textContent=(s.commune?s.commune+" · ":"")+
+      (heading==null ? "au "+cardinal(b)+", nord en haut"
+                     : REL[Math.round((((b-heading)+360)%360)/45)%8]);
+    $("#nextDist").textContent=fmtDist(hav(me.lat,me.lon,s.lat,s.lon));
+  }
+
+  for(const it of items.slice(0,40)){
+    const s=DB.stops[it.si];
+    const li=document.createElement("li");
+    const ar=el("span","arw","▲");
+    ar.style.setProperty("--b", bearing(me.lat,me.lon,s.lat,s.lon));
+    const nm=el("span","nm");
+    nm.append(el("b",null,(it.k?it.k+". ":"")+s.name));
+    nm.append(el("i",null,s.commune||[...s.routes].slice(0,3).map(r=>{const x=DB.routes.get(r);return x?(x.short||x.long):"";}).join(" · ")));
+    li.append(ar, nm, el("span","d", fmtDist(hav(me.lat,me.lon,s.lat,s.lon))));
+    li.onclick=()=>{ map.setView([s.lat,s.lon],17); popStop(it.si); };
+    ul.append(li);
+  }
+  applyHeading();
+}
+
+/* =====================================================================
+   9. Stockage local (24h/24, hors ligne)
+   ===================================================================== */
+const CHUNK = 3.6e6;
+const store = {
+  async set(k,v){
+    if(window.storage) return window.storage.set(k,v,false);
+    return idbSet(k,v);
+  },
+  async get(k){
+    if(window.storage){ try{ const r=await window.storage.get(k,false); return r?r.value:null; }catch(e){ return null; } }
+    return idbGet(k);
+  },
+  async del(k){
+    if(window.storage){ try{ await window.storage.delete(k,false); }catch(e){} return; }
+    return idbDel(k);
+  }
+};
+let _db;
+function idb(){
+  if(_db) return _db;
+  _db=new Promise((res,rej)=>{
+    const r=indexedDB.open("plan49",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("kv");
+    r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+  });
+  return _db;
+}
+async function idbSet(k,v){ const d=await idb(); return new Promise((res,rej)=>{ const t=d.transaction("kv","readwrite"); t.objectStore("kv").put(v,k); t.oncomplete=res; t.onerror=()=>rej(t.error); }); }
+async function idbGet(k){ const d=await idb(); return new Promise((res,rej)=>{ const t=d.transaction("kv"); const q=t.objectStore("kv").get(k); q.onsuccess=()=>res(q.result??null); q.onerror=()=>rej(q.error); }); }
+async function idbDel(k){ const d=await idb(); return new Promise(res=>{ const t=d.transaction("kv","readwrite"); t.objectStore("kv").delete(k); t.oncomplete=res; }); }
+
+function serialize(light){
+  return JSON.stringify({
+    v:1, saved:new Date().toISOString(),
+    agencies:[...DB.agencies.values()].map(a=>[a.id,a.name,a.src,a.color]),
+    stops:DB.stops.map(s=>[s.key,s.id,s.name,s.code,s.lat,s.lon,s.commune,s.src]),
+    routes:[...DB.routes.values()].map(r=>[r.id,r.rawId,r.src,r.short,r.long,r.color,r.text,r.aid,r.type,r.patterns]),
+    patterns:DB.patterns.map(p=>[p.rid,p.dir,p.hs,p.stops,light?null:p.shape,p.trips,p.total]),
+    services:[...DB.services].map(([k,s])=>[k,s.mask.map(b=>b?1:0).join(""),s.start,s.end,[...s.add],[...s.rem]]),
+    sources:DB.sources
+  });
+}
+async function saveAll(){
+  try{
+    const s=serialize();
+    const n=Math.ceil(s.length/CHUNK);
+    await store.set("plan49:meta", JSON.stringify({n, len:s.length, at:Date.now()}));
+    for(let i=0;i<n;i++) await store.set("plan49:d"+i, s.slice(i*CHUNK,(i+1)*CHUNK));
+    toast("Données enregistrées ("+(s.length/1e6).toFixed(1)+" Mo) — disponibles hors ligne.");
+  }catch(e){ toast("Enregistrement impossible : "+e.message); }
+}
+function hydrate(o){
+  DB.agencies.clear(); DB.stops.length=0; DB.stopIdx.clear(); DB.routes.clear();
+  DB.patterns.length=0; DB.services.clear(); DB.sources=o.sources||[];
+  for(const [id,name,src,color] of o.agencies) DB.agencies.set(id,{id,name,src,color,on:true});
+  o.stops.forEach((a,i)=>{ DB.stops.push({key:a[0],id:a[1],name:a[2],code:a[3],lat:a[4],lon:a[5],commune:a[6],src:a[7],routes:new Set()}); DB.stopIdx.set(a[0],i); });
+  for(const a of o.routes) DB.routes.set(a[0],{id:a[0],rawId:a[1],src:a[2],short:a[3],long:a[4],color:a[5],text:a[6],aid:a[7],type:a[8],patterns:a[9]});
+  for(const a of o.patterns) DB.patterns.push({rid:a[0],dir:a[1],hs:a[2],stops:a[3],shape:a[4],trips:a[5],total:a[6]});
+  for(const a of o.services) DB.services.set(a[0],{mask:a[1].split("").map(c=>c==="1"),start:a[2],end:a[3],add:new Set(a[4]),rem:new Set(a[5])});
+  for(const p of DB.patterns) for(const si of p.stops) DB.stops[si].routes.add(p.rid);
+  refreshAll();
+}
+async function loadAll(){
+  const m=await store.get("plan49:meta");
+  if(!m) return false;
+  const {n}=JSON.parse(m);
+  let s="";
+  for(let i=0;i<n;i++){ const c=await store.get("plan49:d"+i); if(c==null){ toast("Sauvegarde incomplète."); return false; } s+=c; }
+  hydrate(JSON.parse(s));
+  return true;
+}
+/* Jeu préparé déposé à côté de la page sur l'hébergement. */
+async function loadFromServer(loud){
+  try{
+    const r=await fetch("donnees.json",{cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    hydrate(await r.json());
+    await saveAll();
+    if(loud) toast("Données du serveur chargées et mises en cache.");
+    return true;
+  }catch(e){
+    if(loud) toast("Pas de donnees.json accessible à côté de cette page.");
+    return false;
+  }
+}
+
+/* =====================================================================
+   10. Exports
+   ===================================================================== */
+function visibleStopSet(){
+  const date=currentDate(), out=new Set();
+  for(const r of DB.routes.values()){
+    if(!agencyOn(r.aid)) continue;
+    for(const pi of r.patterns){ const p=DB.patterns[pi];
+      if(date!=null && patternTrips(p,date)===0) continue;
+      for(const si of p.stops) out.add(si); }
+  }
+  return out;
+}
+const q = v => '"'+String(v==null?"":v).replace(/"/g,'""')+'"';
+$("#expStops").onclick=()=>{
+  const rows=["stop_id;nom;code;commune;lat;lon;source;lignes"];
+  for(const si of visibleStopSet()){
+    const s=DB.stops[si];
+    const ln=[...s.routes].map(r=>{const x=DB.routes.get(r);return x?(x.short||x.long):"";}).join("|");
+    rows.push([q(s.id),q(s.name),q(s.code),q(s.commune),s.lat,s.lon,q(s.src),q(ln)].join(";"));
+  }
+  download("arrets-49.csv", "\uFEFF"+rows.join("\n"), "text/csv;charset=utf-8");
+};
+$("#expGeo").onclick=()=>{
+  const f=[...visibleStopSet()].map(si=>{ const s=DB.stops[si];
+    return {type:"Feature",geometry:{type:"Point",coordinates:[s.lon,s.lat]},
+      properties:{stop_id:s.id,nom:s.name,code:s.code,commune:s.commune,source:s.src}};});
+  download("arrets-49.geojson", JSON.stringify({type:"FeatureCollection",features:f}), "application/geo+json");
+};
+$("#expLines").onclick=()=>{
+  const date=currentDate();
+  const rows=["reseau;ligne;libelle;missions;courses;arrets_distincts"];
+  for(const {r,trips} of visibleRoutes()){
+    const st=new Set(); let miss=0;
+    for(const pi of r.patterns){ const p=DB.patterns[pi];
+      if(date!=null && patternTrips(p,date)===0) continue;
+      miss++; for(const si of p.stops) st.add(si); }
+    rows.push([q(agLabel(r.aid)),q(r.short),q(r.long),miss,trips,st.size].join(";"));
+  }
+  download("lignes-49.csv","\uFEFF"+rows.join("\n"),"text/csv;charset=utf-8");
+};
+function exportRoute(r,pats){
+  const rows=["ligne;mission;ordre;arret;commune;lat;lon;courses"];
+  pats.forEach(({p,n},k)=>{
+    p.stops.forEach((si,j)=>{ const s=DB.stops[si];
+      rows.push([q(r.short||r.long),q(p.hs||"sens "+p.dir),j+1,q(s.name),q(s.commune),s.lat,s.lon,n].join(";")); });
+  });
+  download("ligne-"+(r.short||r.rawId).replace(/\W+/g,"_")+".csv","\uFEFF"+rows.join("\n"),"text/csv;charset=utf-8");
+}
+
+/* =====================================================================
+   10 bis. GTFS-RT : décodage protobuf et flux temps réel
+   ===================================================================== */
+function pbVarint(b,i){
+  let r=0,s=1,c,n=0;
+  do{ c=b[i++]; r+=(c&0x7f)*s; s*=128; n++; }while((c&0x80) && n<10);
+  if(n===10){                       // entier signé négatif : on relit les 32 bits de poids faible
+    let lo=0, j=i-10;
+    for(let k=0;k<4;k++) lo += (b[j+k]&0x7f)*Math.pow(2,7*k);
+    lo += (b[j+4]&0x0f)*268435456;
+    r = lo|0;
+  }
+  return [r,i];
+}
+function pb(buf){
+  const m=new Map(); let i=0;
+  while(i<buf.length){
+    let k; [k,i]=pbVarint(buf,i);
+    const f=k>>>3, w=k&7; let v;
+    if(w===0){ [v,i]=pbVarint(buf,i); }
+    else if(w===1){ v=buf.subarray(i,i+8); i+=8; }
+    else if(w===2){ let n; [n,i]=pbVarint(buf,i); v=buf.subarray(i,i+n); i+=n; }
+    else if(w===5){ v=buf.subarray(i,i+4); i+=4; }
+    else break;
+    if(!m.has(f)) m.set(f,[]);
+    m.get(f).push(v);
+  }
+  return m;
+}
+const P={
+  one:(m,n)=>{const a=m&&m.get(n); return a?a[0]:null;},
+  str:(m,n)=>{const v=P.one(m,n); return v instanceof Uint8Array ? new TextDecoder().decode(v) : "";},
+  int:(m,n)=>{const v=P.one(m,n); return typeof v==="number" ? v : null;},
+  i32:(m,n)=>{const v=P.int(m,n); if(v==null) return null; return v>2147483647&&v<4294967296 ? v-4294967296 : v;},
+  sub:(m,n)=>{const v=P.one(m,n); return v instanceof Uint8Array ? pb(v) : null;},
+  subs:(m,n)=>((m&&m.get(n))||[]).filter(v=>v instanceof Uint8Array).map(v=>pb(v)),
+  f32:(m,n)=>{const v=P.one(m,n); if(!(v instanceof Uint8Array)) return null;
+              return new DataView(v.buffer,v.byteOffset,4).getFloat32(0,true);},
+  tr:(m,n)=>{ const t=P.sub(m,n); if(!t) return "";
+              const tx=P.subs(t,1); if(!tx.length) return "";
+              const fr=tx.find(x=>/^fr/i.test(P.str(x,2)));
+              return P.str(fr||tx[0],1); }
+};
+const RT_EFFECT=["","Service supprimé","Service réduit","Retards importants","Déviation","Service renforcé",
+  "Service modifié","Autre effet","Effet inconnu","Arrêt déplacé","Sans effet","Accessibilité"];
+const RT_CAUSE=["","Cause inconnue","Autre cause","Problème technique","Grève","Manifestation","Accident",
+  "Jour férié","Météo","Maintenance","Travaux","Intervention de police","Urgence médicale"];
+
+const FEEDS=[
+  {id:"aleop-al", n:"Aléop — alertes de service", kind:"alert", on:true,
+   url:"https://proxy.transport.data.gouv.fr/resource/aleop-pdl-gtfs-rt-alerts"},
+  {id:"aleop-tu", n:"Aléop — retards (trip updates)", kind:"trip", on:false,
+   url:"https://proxy.transport.data.gouv.fr/resource/aleop-pdl-gtfs-rt-trip-update"},
+  {id:"aleop-vp", n:"Aléop — position des véhicules", kind:"vehicle", on:false,
+   url:"https://proxy.transport.data.gouv.fr/resource/aleop-pdl-gtfs-rt-vehicle-position"},
+  {id:"irigo-al", n:"Irigo — alertes de service", kind:"alert", on:false,
+   url:"https://notify.ratpdev.com/api/networks/RD%20ANGERS/alerts/gtfsrt"},
+  {id:"irigo-tu", n:"Irigo — retards (trip updates)", kind:"trip", on:false,
+   url:"https://ara-api.enroute.mobi/irigo/gtfs/trip-updates"},
+  {id:"irigo-vp", n:"Irigo — position des véhicules", kind:"vehicle", on:false,
+   url:"https://ara-api.enroute.mobi/irigo/gtfs/vehicle-positions"}
+];
+const RT={alerts:[], vehicles:[], delays:new Map(), age:null, timer:null, showVeh:true};
+
+let rawIdx=null;
+function routeByRawId(rid){
+  if(!rawIdx){ rawIdx=new Map(); for(const r of DB.routes.values()) if(!rawIdx.has(r.rawId)) rawIdx.set(r.rawId,r); }
+  return rawIdx.get(rid) || null;
+}
+function rtUrl(u){ const p=$("#rtProxy").value.trim(); return p ? p+encodeURIComponent(u) : u; }
+
+async function pullFeed(f){
+  const st=document.getElementById("st-"+f.id);
+  st.className="st"; st.textContent="…";
+  try{
+    const r=await fetch(rtUrl(f.url),{mode:"cors",cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const msg=pb(new Uint8Array(await r.arrayBuffer()));
+    const hdr=P.sub(msg,1), ts=hdr?P.int(hdr,3):null;
+    const ents=P.subs(msg,2);
+    if(f.kind==="alert"){
+      RT.alerts=RT.alerts.filter(a=>a.feed!==f.id);
+      for(const e of ents){
+        const a=P.sub(e,5); if(!a) continue;
+        const sel=P.subs(a,5);
+        RT.alerts.push({
+          feed:f.id, src:f.n,
+          head:P.tr(a,10)||"(sans titre)", desc:P.tr(a,11), url:P.tr(a,8),
+          effect:RT_EFFECT[P.int(a,7)]||"", cause:RT_CAUSE[P.int(a,6)]||"",
+          routes:[...new Set(sel.map(s=>P.str(s,2)).filter(Boolean))],
+          stops:[...new Set(sel.map(s=>P.str(s,5)).filter(Boolean))],
+          periods:P.subs(a,1).map(t=>[P.int(t,1),P.int(t,2)])
+        });
+      }
+    }else if(f.kind==="vehicle"){
+      RT.vehicles=RT.vehicles.filter(v=>v.feed!==f.id);
+      for(const e of ents){
+        const v=P.sub(e,4); if(!v) continue;
+        const pos=P.sub(v,2); if(!pos) continue;
+        const la=P.f32(pos,1), lo=P.f32(pos,2);
+        if(la==null||lo==null||(!la&&!lo)) continue;
+        const tr=P.sub(v,1), vd=P.sub(v,8);
+        RT.vehicles.push({ feed:f.id, lat:la, lon:lo, bearing:P.f32(pos,3),
+          speed:P.f32(pos,5), rid:tr?P.str(tr,5):"", trip:tr?P.str(tr,1):"",
+          label:(vd?(P.str(vd,2)||P.str(vd,1)):"")||P.str(e,1), ts:P.int(v,5) });
+      }
+    }else{
+      for(const [k] of RT.delays) if(k.startsWith(f.id+"|")) RT.delays.delete(k);
+      for(const e of ents){
+        const tu=P.sub(e,3); if(!tu) continue;
+        const tr=P.sub(tu,1); const rid=tr?P.str(tr,5):"";
+        let d=P.i32(tu,5);
+        if(d==null){
+          for(const su of P.subs(tu,2)){
+            const ev=P.sub(su,3)||P.sub(su,2);
+            if(ev){ const x=P.i32(ev,1); if(x!=null){ d=x; break; } }
+          }
+        }
+        if(d==null) continue;
+        const key=f.id+"|"+(rid||"?");
+        let a=RT.delays.get(key); if(!a){ a={feed:f.id, rid, n:0, sum:0, max:0}; RT.delays.set(key,a); }
+        a.n++; a.sum+=d; if(Math.abs(d)>Math.abs(a.max)) a.max=d;
+      }
+    }
+    RT.age=ts?new Date(ts*1000):new Date();
+    st.className="st ok"; st.textContent=ents.length+" objets";
+  }catch(err){
+    st.className="st ko";
+    st.textContent = /Failed to fetch|NetworkError|CORS/i.test(err.message) ? "bloqué (CORS)" : err.message;
+  }
+}
+
+async function pullAll(){
+  const act=FEEDS.filter(f=>f.on);
+  if(!act.length){ $("#rtStatus").textContent="Aucun flux sélectionné."; return; }
+  $("#rtStatus").textContent="Interrogation des flux…";
+  await Promise.all(act.map(pullFeed));
+  renderRT();
+  $("#rtStatus").textContent="Dernière lecture à "+new Date().toLocaleTimeString("fr-FR")+
+    (RT.age?" · horodatage du flux : "+RT.age.toLocaleTimeString("fr-FR"):"");
+}
+
+function renderRT(){
+  /* alertes */
+  const box=$("#rtAlerts"); box.innerHTML="";
+  $("#rtAlertTitle").textContent="Alertes de service"+(RT.alerts.length?" ("+RT.alerts.length+")":"");
+  if(!RT.alerts.length) box.append(el("p","hint","Aucune alerte publiée sur les flux sélectionnés."));
+  for(const a of RT.alerts){
+    const d=el("div","alert"+(/supprim|Retards|réduit/i.test(a.effect)?" sev":""));
+    d.append(el("b",null,a.head));
+    if(a.desc) d.append(el("p",null,a.desc));
+    const tags=el("div","tags");
+    if(a.effect) tags.append(el("span","tag",a.effect));
+    if(a.cause && !/inconnue/i.test(a.cause)) tags.append(el("span","tag",a.cause));
+    for(const rid of a.routes.slice(0,12)){
+      const r=routeByRawId(rid);
+      const t=el("span","tag"+(r?" l":""), r?(r.short||r.long):rid);
+      if(r){ t.style.background=routeColor(r); t.style.color=pickInk(routeColor(r)); }
+      tags.append(t);
+    }
+    if(a.stops.length) tags.append(el("span","tag",a.stops.length+" arrêt"+(a.stops.length>1?"s":"")+" concerné"+(a.stops.length>1?"s":"")));
+    for(const [s,e] of a.periods.slice(0,2)){
+      if(!s&&!e) continue;
+      tags.append(el("span","tag",
+        (s?new Date(s*1000).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"…")+
+        " → "+(e?new Date(e*1000).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"…")));
+    }
+    d.append(tags);
+    if(a.url){ const l=document.createElement("a"); l.href=a.url; l.target="_blank"; l.rel="noopener";
+      l.textContent="Détail"; l.style.cssText="font-size:12px;color:var(--girouette);display:inline-block;margin-top:7px"; d.append(l); }
+    box.append(d);
+  }
+
+  /* retards */
+  const db=$("#rtDelays"); db.innerHTML="";
+  const rows=[...RT.delays.values()].sort((a,b)=>Math.abs(b.sum/b.n)-Math.abs(a.sum/a.n)).slice(0,25);
+  $("#rtDelayTitle").textContent="Retards par ligne"+(rows.length?" ("+rows.length+")":"");
+  if(!rows.length) db.append(el("p","hint","Activez un flux « retards » pour suivre l'écart aux horaires."));
+  for(const x of rows){
+    const r=routeByRawId(x.rid);
+    const line=el("div","delayrow");
+    const bd=el("span","badge", r?(r.short||r.long).slice(0,8):(x.rid||"?"));
+    bd.style.background=r?routeColor(r):"#3a4756"; bd.style.color=r?pickInk(routeColor(r)):"#e8eef4";
+    const avg=Math.round(x.sum/x.n/60);
+    line.append(bd, el("span",null,x.n+" course"+(x.n>1?"s":"")),
+      el("span","v "+(avg>0?"late":avg<0?"early":""), (avg>0?"+":"")+avg+" min"));
+    db.append(line);
+  }
+
+  /* véhicules */
+  layerRT.clearLayers();
+  if(RT.showVeh){
+    for(const v of RT.vehicles){
+      const r=routeByRawId(v.rid);
+      const c=r?routeColor(r):"#ff9e1b";
+      L.circleMarker([v.lat,v.lon],{radius:6,color:"#0e1319",weight:2,fillColor:c,fillOpacity:1})
+        .addTo(layerRT)
+        .bindTooltip((r?(r.short||r.long)+" · ":"")+(v.label||"véhicule"),{direction:"top"})
+        .bindPopup("<b>"+esc(r?(r.short||r.long):(v.rid||"ligne inconnue"))+"</b><br>"+
+          esc(v.label||"")+(v.speed?"<br>"+Math.round(v.speed*3.6)+" km/h":"")+
+          (v.ts?"<br><span style='color:#93a3b3'>vu à "+new Date(v.ts*1000).toLocaleTimeString("fr-FR")+"</span>":""));
+    }
+  }
+}
+
+function renderFeeds(){
+  const box=$("#feeds"); box.innerHTML="";
+  for(const f of FEEDS){
+    const l=el("label","feed");
+    const c=document.createElement("input"); c.type="checkbox"; c.checked=f.on;
+    c.onchange=()=>{ f.on=c.checked; if(f.on) pullFeed(f).then(renderRT); else { 
+      RT.alerts=RT.alerts.filter(a=>a.feed!==f.id); RT.vehicles=RT.vehicles.filter(v=>v.feed!==f.id);
+      for(const [k] of RT.delays) if(k.startsWith(f.id+"|")) RT.delays.delete(k);
+      document.getElementById("st-"+f.id).textContent=""; renderRT(); } };
+    const st=el("span","st"); st.id="st-"+f.id;
+    l.append(c, el("span",null,f.n), st);
+    box.append(l);
+  }
+}
+function rtSchedule(){
+  clearInterval(RT.timer);
+  const s=+$("#rtEvery").value;
+  if(s>0) RT.timer=setInterval(pullAll, s*1000);
+}
+
+/* =====================================================================
+   11. Interface
+   ===================================================================== */
+function renderSources(){
+  const box=$("#sources");
+  for(const s of SOURCES){
+    const d=el("div","src");
+    d.append(el("div","n",s.n), el("div","m"+(s.exp?" exp":""),s.m));
+    const row=el("div","row");
+    if(s.zip){ const a=el("a",null,"Télécharger le .zip"); a.href=s.zip; a.target="_blank"; a.rel="noopener"; row.append(a); }
+    if(s.page){ const p=el("a",null,"Fiche du jeu de données"); p.href=s.page; p.target="_blank"; p.rel="noopener"; row.append(p); }
+    if(s.zip){
+      const b=el("button","btn ghost","Charger directement");
+      b.onclick=()=>fetchZip(s.zip,s.n,b);
+      b.style.padding="5px 9px"; b.style.fontSize="12.5px"; row.append(b);
+    }
+    d.append(row); box.append(d);
+  }
+}
+async function fetchZip(url,name,btn){
+  btn.disabled=true; btn.textContent="Téléchargement…";
+  try{
+    const r=await fetch(url,{mode:"cors"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const buf=await r.arrayBuffer();
+    await ingest(buf, name);
+    btn.textContent="Chargé";
+  }catch(e){
+    btn.disabled=false; btn.textContent="Charger directement";
+    toast("Téléchargement direct refusé par le serveur (CORS). Utilisez le lien .zip puis déposez le fichier.", 6000);
+  }
+}
+async function ingest(fileOrBuf, label){
+  try{
+    $("#statusText").textContent="Lecture de "+label+"…";
+    await yieldUI();
+    await readZip(fileOrBuf, label);
+    refreshAll();
+    await saveAll();
+  }catch(e){
+    progress(null);
+    toast("Lecture impossible : "+e.message, 6000);
+    $("#statusText").textContent="Erreur de lecture";
+  }
+}
+function refreshAll(){ rawIdx=null; agDupes=null; renderAgencies(); drawMap(); renderLines(); renderNav(); renderRT(); fitAll(); }
+
+/* onglets */
+for(const id of ["data","lines","nav","rt"]){
+  $("#tab-"+id).onclick=()=>{
+    for(const j of ["data","lines","nav","rt"]){
+      $("#tab-"+j).setAttribute("aria-selected", j===id?"true":"false");
+      const p=$("#pane-"+j); if(j===id) p.setAttribute("data-active",""); else p.removeAttribute("data-active");
+    }
+  };
+}
+/* temps réel */
+$("#rtNow").onclick=pullAll;
+$("#rtEvery").onchange=rtSchedule;
+$("#rtVeh").onclick=e=>{
+  RT.showVeh=!RT.showVeh; e.currentTarget.setAttribute("aria-pressed",RT.showVeh?"true":"false"); renderRT();
+};
+/* dépôt de fichiers */
+const drop=$("#drop");
+$("#pick").onclick=()=>$("#file").click();
+$("#file").onchange=async e=>{ for(const f of e.target.files) await ingest(f, f.name.replace(/\.zip$/i,"")); e.target.value=""; };
+["dragenter","dragover"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add("hot");}));
+["dragleave","drop"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove("hot");}));
+drop.addEventListener("drop",async e=>{ for(const f of e.dataTransfer.files) if(/\.zip$/i.test(f.name)) await ingest(f,f.name.replace(/\.zip$/i,"")); });
+
+/* filtres */
+$("#q").oninput=()=>renderLines();
+$("#date").onchange=()=>{ drawMap(); renderLines(); renderNav(); };
+$("#allDates").onchange=()=>{ $("#date").disabled=$("#allDates").checked; drawMap(); renderLines(); renderNav(); };
+$("#expBundle").onclick=()=>{
+  if(!DB.stops.length){ toast("Charge d'abord au moins un GTFS."); return; }
+  const s=serialize(false);
+  download("donnees.json", s, "application/json");
+  toast("donnees.json : "+(s.length/1048576).toFixed(1)+" Mo");
+};
+$("#expLight").onclick=()=>{
+  if(!DB.stops.length){ toast("Charge d'abord au moins un GTFS."); return; }
+  const s=serialize(true);
+  download("donnees.json", s, "application/json");
+  toast("Version allégée : "+(s.length/1048576).toFixed(1)+" Mo");
+};
+$("#restore").onclick=()=>loadAll().then(ok=>toast(ok?"Données rechargées depuis la mémoire de l'appareil.":"Aucune donnée enregistrée."));
+$("#fromServer").onclick=()=>loadFromServer(true);
+$("#wipe").onclick=async()=>{
+  const m=await store.get("plan49:meta");
+  if(m){ const {n}=JSON.parse(m); for(let i=0;i<n;i++) await store.del("plan49:d"+i); await store.del("plan49:meta"); }
+  location.reload();
+};
+
+/* boutons carte */
+$("#tilesBtn").onclick=e=>{
+  tilesOn=!tilesOn;
+  if(tilesOn) tiles.addTo(map); else map.removeLayer(tiles);
+  e.currentTarget.setAttribute("aria-pressed", tilesOn?"true":"false");
+};
+(function(){
+  const sel=$("#tileSel");
+  TILES.forEach((t,i)=>{ const o=document.createElement("option"); o.value=i; o.textContent=t.n; sel.append(o); });
+  sel.onchange=()=>{ tilesOn=true; $("#tilesBtn").setAttribute("aria-pressed","true"); setTiles(sel.value); };
+})();
+$("#shapesBtn").onclick=e=>{
+  showShapes=!showShapes; e.currentTarget.setAttribute("aria-pressed",showShapes?"true":"false"); drawMap();
+};
+$("#fitBtn").onclick=fitAll;
+
+/* feuille mobile */
+$("#sheetbtn").onclick=()=>{
+  const r=$("#rail"), open=r.classList.toggle("open");
+  $("#sheetbtn").setAttribute("aria-expanded",open?"true":"false");
+};
+
+/* démarrage */
+(function init(){
+  const t=new Date();
+  $("#date").value=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
+  renderSources(); renderNav(); renderFeeds(); rtSchedule(); pullAll();
+  loadAll().then(ok=>{
+    if(ok) return true;
+    return loadFromServer(false);
+  }).then(ok=>{ if(!ok) $("#statusText").textContent="Aucune donnée chargée"; });
+  if("serviceWorker" in navigator && location.protocol.startsWith("http"))
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+})();
+</script>
+</body>
+</html>
